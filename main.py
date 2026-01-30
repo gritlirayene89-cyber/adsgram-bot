@@ -1,39 +1,79 @@
 import telebot
 import time
+from flask import Flask
+from threading import Thread
 
-# بياناتك الخاصة
+# --- 1. حل مشكلة الـ Port لـ Render ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is Running!"
+
+def run_web():
+    app.run(host='0.0.0.0', port=8080)
+
+def start_web_server():
+    t = Thread(target=run_web)
+    t.daemon = True
+    t.start()
+
+# --- 2. إعداد البوت ---
 API_TOKEN = '8346075393:AAF8vUnRtUj2STFR5aBW47Nnctwn08LXp1A'
-ADMIN_ID = 7605020034 # لاستقبال طلبات الحسابات
-UNIT_ID = 'bot-22081' 
+ADMIN_ID = 7605020034 
+UNIT_ID = 'bot-22081'
 
 bot = telebot.TeleBot(API_TOKEN)
+users_db = {} # ملاحظة: في Render البيانات ستضيع عند إعادة التشغيل، لاحقاً سنستخدم قاعدة بيانات
 
-# قاعدة بيانات مؤقتة (للتجربة)
-users = {}
+def get_u(uid):
+    if uid not in users_db: users_db[uid] = 0
+    return users_db[uid]
 
-def get_user(uid):
-    if uid not in users:
-        users[uid] = {'points': 0}
-    return users[uid]
-
+# --- 3. الأوامر والأزرار ---
 @bot.message_handler(commands=['start'])
-def start(m):
+def welcome(m):
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add('📺 مشاهدة إعلان (+10 نقاط)')
-    markup.add('🛒 متجر الحسابات', '💰 رصيدي')
-    markup.add('🎁 الجوائز الأسبوعية')
-    bot.send_message(m.chat.id, "🔥 أهلاً بك! اجمع النقاط واستبدلها بحسابات عالمية.", reply_markup=markup)
+    markup.add('📺 مشاهدة إعلان (+10)', '💰 رصيدي')
+    markup.add('🛒 متجر الحسابات', '🎁 جوائز أسبوعية')
+    bot.send_message(m.chat.id, "مرحباً بك في بوت الحسابات العالمي! 🚀", reply_markup=markup)
 
-# --- نظام الإعلانات ---
-@bot.message_handler(func=lambda m: m.text == '📺 مشاهدة إعلان (+10 نقاط)')
-def show_ad(m):
-    u = get_user(m.from_user.id)
-    ad_url = f"https://adsgram.ai/show?id={UNIT_ID}&userId={m.from_user.id}"
+@bot.message_handler(func=lambda m: m.text == '💰 رصيدي')
+def bal(m):
+    bot.reply_to(m, f"💎 رصيدك الحالي: {get_u(m.from_user.id)} نقطة")
+
+@bot.message_handler(func=lambda m: m.text == '🛒 متجر الحسابات')
+def shop(m):
+    kb = telebot.types.InlineKeyboardMarkup()
+    kb.add(telebot.types.InlineKeyboardButton("🇺🇸 أمريكي (500)", callback_data="buy_us"))
+    kb.add(telebot.types.InlineKeyboardButton("🇫🇷 فرنسي (450)", callback_data="buy_fr"))
+    kb.add(telebot.types.InlineKeyboardButton("🇯🇵 ياباني (600)", callback_data="buy_jp"))
+    bot.send_message(m.chat.id, "اختر الحساب المطلوب:", reply_markup=kb)
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith('buy_'))
+def process_buy(c):
+    price = {"buy_us": 500, "buy_fr": 450, "buy_jp": 600}[c.data]
+    name = {"buy_us": "أمريكي", "buy_fr": "فرنسي", "buy_jp": "ياباني"}[c.data]
+    uid = c.from_user.id
     
-    # هنا نفترض أن المستخدم شاهد الإعلان (في النسخة الاحترافية نحتاج Webhook للتأكد)
-    u['points'] += 10
-    bot.send_message(m.chat.id, f"✅ تم إضافة 10 نقاط لرصيدك!\nرابط الإعلان للدعم:\n{ad_url}")
+    if users_db.get(uid, 0) >= price:
+        users_db[uid] -= price
+        bot.send_message(c.message.chat.id, f"✅ طلبك قيد التنفيذ لحساب {name}. سيصلك الكود هنا قريباً.")
+        bot.send_message(ADMIN_ID, f"🚨 طلب جديد: {name}\nالمستخدم: @{c.from_user.username}")
+    else:
+        bot.answer_callback_query(c.id, "❌ نقاطك لا تكفي!", show_alert=True)
 
+# --- 4. تشغيل كل شيء ---
+if __name__ == "__main__":
+    start_web_server() # تشغيل السيرفر الوهمي لإرضاء Render
+    print("Serever Started...")
+    
+    while True:
+        try:
+            bot.polling(none_stop=True, interval=2, timeout=20)
+        except Exception as e:
+            print(f"Error: {e}")
+            time.sleep(5)
 # --- المتجر ---
 @bot.message_handler(func=lambda m: m.text == '🛒 متجر الحسابات')
 def store(m):
