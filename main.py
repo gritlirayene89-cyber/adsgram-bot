@@ -2,107 +2,135 @@ import telebot
 import time
 from flask import Flask
 from threading import Thread
+from datetime import datetime, timedelta
 
-# --- 1. حل مشكلة الـ Port لـ Render ---
+# --- 1. سيرفر Flask لتجنب إغلاق Render ---
 app = Flask('')
-
 @app.route('/')
-def home():
-    return "Bot is Running!"
+def home(): return "Bot is Online and Ready!"
 
-def run_web():
-    app.run(host='0.0.0.0', port=8080)
+def run_web(): app.run(host='0.0.0.0', port=8080)
 
 def start_web_server():
     t = Thread(target=run_web)
     t.daemon = True
     t.start()
 
-# --- 2. إعداد البوت ---
+# --- 2. الإعدادات والبيانات ---
 API_TOKEN = '8346075393:AAF8vUnRtUj2STFR5aBW47Nnctwn08LXp1A'
 ADMIN_ID = 7605020034 
-UNIT_ID = 'bot-22081'
+UNIT_ID = '22081' # رقم الـ Block ID فقط
+BOT_USERNAME = 'Adsrewards_bot' 
 
 bot = telebot.TeleBot(API_TOKEN)
-users_db = {} # ملاحظة: في Render البيانات ستضيع عند إعادة التشغيل، لاحقاً سنستخدم قاعدة بيانات
+users_db = {} # {user_id: {'points': 0, 'banned': False, 'name': '', 'last_daily': None, 'referred_by': None}}
 
-def get_u(uid):
-    if uid not in users_db: users_db[uid] = 0
+def get_u(uid, name=""):
+    if uid not in users_db:
+        users_db[uid] = {'points': 0, 'banned': False, 'name': name, 'last_daily': None, 'referred_by': None}
     return users_db[uid]
 
-# --- 3. الأوامر والأزرار ---
+# --- 3. نظام البداية والإحالة ---
 @bot.message_handler(commands=['start'])
 def welcome(m):
+    u = get_u(m.from_user.id, m.from_user.first_name)
+    if u['banned']: return bot.send_message(m.chat.id, "🚫 أنت محظور حالياً.")
+
+    # فحص رابط الدعوة
+    args = m.text.split()
+    if len(args) > 1 and args[1].isdigit():
+        ref_id = int(args[1])
+        if ref_id != m.from_user.id and u['referred_by'] is None:
+            u['referred_by'] = ref_id
+            get_u(ref_id)['points'] += 15
+            bot.send_message(ref_id, f"🎉 سجل صديق جديد عبر رابطك! حصلت على 15 نقطة.")
+
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add('📺 مشاهدة إعلان (+10)', '💰 رصيدي')
-    markup.add('🛒 متجر الحسابات', '🎁 جوائز أسبوعية')
-    bot.send_message(m.chat.id, "مرحباً بك في بوت الحسابات العالمي! 🚀", reply_markup=markup)
+    markup.add('📺 مشاهدة إعلان (+10)', '🎁 جائزة يومية (+10)')
+    markup.add('🛒 متجر الاستبدال', '👥 دعوة الأصدقاء')
+    markup.add('💰 رصيدي')
+    if m.from_user.id == ADMIN_ID: markup.add('🛠️ لوحة الإدارة')
+    
+    bot.send_message(m.chat.id, f"🔥 أهلاً بك {m.from_user.first_name} في بوت الأرباح!\nاستبدل نقاطك بأقوى الحسابات العالمية.", reply_markup=markup)
 
-@bot.message_handler(func=lambda m: m.text == '💰 رصيدي')
-def bal(m):
-    bot.reply_to(m, f"💎 رصيدك الحالي: {get_u(m.from_user.id)} نقطة")
+# --- 4. لوحة الإدارة (Admin Panel) ---
+@bot.message_handler(func=lambda m: m.text == '🛠️ لوحة الإدارة' and m.from_user.id == ADMIN_ID)
+def admin_panel(m):
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add('📊 إحصائيات', '👤 المستخدمين')
+    markup.add('➕ إضافة نقاط', '🚫 حظر مستخدم')
+    markup.add('🔙 خروج')
+    bot.send_message(m.chat.id, "🛠️ مرحباً أيها المدير، اختر المهمة:", reply_markup=markup)
 
-@bot.message_handler(func=lambda m: m.text == '🛒 متجر الحسابات')
+@bot.message_handler(func=lambda m: m.from_user.id == ADMIN_ID and m.text == '📊 إحصائيات')
+def stats(m):
+    bot.reply_to(m, f"👥 عدد المستخدمين: {len(users_db)}")
+
+# --- 5. المتجر ونظام الاستبدال ---
+@bot.message_handler(func=lambda m: m.text == '🛒 متجر الاستبدال')
 def shop(m):
     kb = telebot.types.InlineKeyboardMarkup()
-    kb.add(telebot.types.InlineKeyboardButton("🇺🇸 أمريكي (500)", callback_data="buy_us"))
-    kb.add(telebot.types.InlineKeyboardButton("🇫🇷 فرنسي (450)", callback_data="buy_fr"))
-    kb.add(telebot.types.InlineKeyboardButton("🇯🇵 ياباني (600)", callback_data="buy_jp"))
-    bot.send_message(m.chat.id, "اختر الحساب المطلوب:", reply_markup=kb)
+    kb.add(telebot.types.InlineKeyboardButton("🇺🇸 حساب أمريكي (800 ن)", callback_data="buy_us"))
+    kb.add(telebot.types.InlineKeyboardButton("🇫🇷 حساب فرنسي (600 ن)", callback_data="buy_fr"))
+    kb.add(telebot.types.InlineKeyboardButton("🇯🇵 حساب ياباني (400 ن)", callback_data="buy_jp"))
+    kb.add(telebot.types.InlineKeyboardButton("🎁 جائزة أسبوعية (500 ن)", callback_data="buy_week"))
+    bot.send_message(m.chat.id, "🛍️ المتجر: اختر ما تريد استبداله بنقاطك:", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith('buy_'))
-def process_buy(c):
-    price = {"buy_us": 500, "buy_fr": 450, "buy_jp": 600}[c.data]
-    name = {"buy_us": "أمريكي", "buy_fr": "فرنسي", "buy_jp": "ياباني"}[c.data]
-    uid = c.from_user.id
+def process_purchase(c):
+    prices = {"buy_us": 800, "buy_fr": 600, "buy_jp": 400, "buy_week": 500}
+    names = {"buy_us": "حساب أمريكي", "buy_fr": "حساب فرنسي", "buy_jp": "حساب ياباني", "buy_week": "جائزة أسبوعية"}
     
-    if users_db.get(uid, 0) >= price:
-        users_db[uid] -= price
-        bot.send_message(c.message.chat.id, f"✅ طلبك قيد التنفيذ لحساب {name}. سيصلك الكود هنا قريباً.")
-        bot.send_message(ADMIN_ID, f"🚨 طلب جديد: {name}\nالمستخدم: @{c.from_user.username}")
-    else:
-        bot.answer_callback_query(c.id, "❌ نقاطك لا تكفي!", show_alert=True)
-
-# --- 4. تشغيل كل شيء ---
-if __name__ == "__main__":
-    start_web_server() # تشغيل السيرفر الوهمي لإرضاء Render
-    print("Serever Started...")
+    u = get_u(c.from_user.id)
+    price = prices[c.data]
     
-    while True:
-        try:
-            bot.polling(none_stop=True, interval=2, timeout=20)
-        except Exception as e:
-            print(f"Error: {e}")
-            time.sleep(5)
-# --- المتجر ---
-@bot.message_handler(func=lambda m: m.text == '🛒 متجر الحسابات')
-def store(m):
-    markup = telebot.types.InlineKeyboardMarkup()
-    markup.add(telebot.types.InlineKeyboardButton("🇺🇸 حساب أمريكي (500 نقطة)", callback_data="buy_us"))
-    markup.add(telebot.types.InlineKeyboardButton("🇫🇷 حساب فرنسي (450 نقطة)", callback_data="buy_fr"))
-    markup.add(telebot.types.InlineKeyboardButton("🇯🇵 حساب ياباني (600 نقطة)", callback_data="buy_jp"))
-    bot.send_message(m.chat.id, "اختر نوع الحساب الذي تريد شراءه بنقاطك:", reply_markup=markup)
-
-# --- معالجة عمليات الشراء ---
-@bot.callback_query_handler(func=lambda call: call.data.startswith('buy_'))
-def handle_buy(call):
-    u = get_user(call.from_user.id)
-    prices = {'buy_us': 500, 'buy_fr': 450, 'buy_jp': 600}
-    names = {'buy_us': "أمريكي", 'buy_fr': "فرنسي", 'buy_jp': "ياباني"}
-    
-    price = prices[call.data]
     if u['points'] >= price:
         u['points'] -= price
-        bot.answer_callback_query(call.id, "تمت العملية بنجاح!")
-        bot.send_message(call.message.chat.id, f"✅ تم شراء حساب {names[call.data]}!\nسيتم إرسال البيانات لك عبر الخاص من قبل الأدمن قريباً.")
-        # إشعار للأدمن
-        bot.send_message(ADMIN_ID, f"🚨 طلب شراء جديد!\nالمستخدم: @{call.from_user.username}\nالنوع: {names[call.data]}")
+        bot.answer_callback_query(c.id, "✅ تم الطلب بنجاح!")
+        bot.send_message(c.message.chat.id, f"✅ تم خصم {price} نقطة مقابل {names[c.data]}. سيتم التواصل معك قريباً.")
+        bot.send_message(ADMIN_ID, f"🔔 طلب جديد: {names[c.data]}\n👤 من: [{c.from_user.first_name}](tg://user?id={c.from_user.id})", parse_mode="Markdown")
     else:
-        bot.answer_callback_query(call.id, "❌ نقاطك غير كافية!", show_alert=True)
+        bot.answer_callback_query(c.id, "❌ نقاطك غير كافية!", show_alert=True)
+
+# --- 6. الإعلانات (رابط مباشر) ---
+@bot.message_handler(func=lambda m: m.text == '📺 مشاهدة إعلان (+10)')
+def show_ad(m):
+    u = get_u(m.from_user.id)
+    ad_url = f"https://app.adsgram.ai/show?id={UNIT_ID}&userId={m.from_user.id}"
+    
+    kb = telebot.types.InlineKeyboardMarkup()
+    kb.add(telebot.types.InlineKeyboardButton("فتح الإعلان الآن 🔗", url=ad_url))
+    
+    bot.send_message(m.chat.id, "✅ اضغط على الزر أدناه لمشاهدة الإعلان والحصول على النقاط:", reply_markup=kb)
+    u['points'] += 10 # إضافة النقاط (يفضل استخدام ويب هوك للتحقق)
+
+# --- 7. ميزات إضافية (دعوة + يومية + رصيد) ---
+@bot.message_handler(func=lambda m: m.text == '👥 دعوة الأصدقاء')
+def invite_friends(m):
+    link = f"https://t.me/{BOT_USERNAME}?start={m.from_user.id}"
+    bot.send_message(m.chat.id, f"🔗 رابطك الخاص للدعوة:\n`{link}`\n\n15 نقطة لكل صديق يسجل!", parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text == '🎁 جائزة يومية (+10)')
+def daily_reward(m):
+    u = get_u(m.from_user.id)
+    now = datetime.now()
+    if u['last_daily'] is None or now > u['last_daily'] + timedelta(hours=24):
+        u['points'] += 10
+        u['last_daily'] = now
+        bot.reply_to(m, "✅ استلمت جائزتك اليومية (10 نقاط)!")
+    else:
+        bot.reply_to(m, "❌ استلمتها بالفعل، عد غداً!")
 
 @bot.message_handler(func=lambda m: m.text == '💰 رصيدي')
-def balance(m):
-    u = get_user(m.from_user.id)
+def show_balance(m):
+    u = get_u(m.from_user.id)
     bot.reply_to(m, f"💎 رصيدك الحالي: {u['points']} نقطة")
 
-bot.polling(none_stop=True)
+@bot.message_handler(func=lambda m: m.text == '🔙 خروج')
+def exit_admin(m):
+    welcome(m)
+
+if __name__ == "__main__":
+    start_web_server()
+    print("Bot is Starting...")
+    bot.polling(none_stop=True)
